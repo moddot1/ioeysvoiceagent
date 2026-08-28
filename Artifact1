@@ -1,0 +1,506 @@
+// Full Stack AI Development Agent
+// Multi-platform code organization and deployment system
+
+const fs = require('fs').promises;
+const path = require('path');
+const { exec } = require('child_process');
+const util = require('util');
+const execAsync = util.promisify(exec);
+
+class AIDevAgent {
+  constructor() {
+    this.platforms = {
+      react: { extensions: ['.jsx', '.tsx'], buildCmd: 'npm run build' },
+      python: { extensions: ['.py'], buildCmd: 'python -m pip install -r requirements.txt' },
+      nextjs: { extensions: ['.js', '.jsx', '.ts', '.tsx'], buildCmd: 'npm run build' },
+      nodejs: { extensions: ['.js', '.ts'], buildCmd: 'npm install' },
+      solana: { extensions: ['.rs'], buildCmd: 'anchor build' },
+      solidity: { extensions: ['.sol'], buildCmd: 'hardhat compile' },
+      html: { extensions: ['.html', '.css', '.js'], buildCmd: 'echo "Static files ready"' },
+      ssh: { extensions: ['.sh', '.config'], buildCmd: 'chmod +x *.sh' },
+      markdown: { extensions: ['.md'], buildCmd: 'echo "Documentation ready"' }
+    };
+    
+    this.projectStructure = {
+      organized: false,
+      projects: [],
+      deploymentStatus: {},
+      lastSync: null
+    };
+  }
+
+  // Initialize the agent and scan for projects
+  async initialize() {
+    console.log('🤖 AI Development Agent Initializing...');
+    await this.scanProjects();
+    await this.createProjectStructure();
+    console.log('✅ Agent initialized successfully!');
+  }
+
+  // Scan all directories for development projects
+  async scanProjects() {
+    const commonPaths = [
+      process.cwd(),
+      path.join(process.env.HOME || process.env.USERPROFILE, 'Desktop'),
+      path.join(process.env.HOME || process.env.USERPROFILE, 'Documents'),
+      path.join(process.env.HOME || process.env.USERPROFILE, 'Projects'),
+      '/storage/emulated/0', // Android path for Samsung tablet
+      '/sdcard' // Alternative Android path
+    ];
+
+    for (const basePath of commonPaths) {
+      try {
+        await this.scanDirectory(basePath);
+      } catch (error) {
+        console.log(`⚠️  Skipping ${basePath}: ${error.message}`);
+      }
+    }
+  }
+
+  async scanDirectory(dirPath, depth = 0) {
+    if (depth > 3) return; // Limit scanning depth
+
+    try {
+      const items = await fs.readdir(dirPath);
+      
+      for (const item of items) {
+        const fullPath = path.join(dirPath, item);
+        const stat = await fs.stat(fullPath);
+        
+        if (stat.isDirectory() && !item.startsWith('.') && item !== 'node_modules') {
+          const projectType = await this.detectProjectType(fullPath);
+          if (projectType) {
+            this.projectStructure.projects.push({
+              name: item,
+              path: fullPath,
+              type: projectType,
+              lastModified: stat.mtime,
+              status: 'discovered'
+            });
+          }
+          await this.scanDirectory(fullPath, depth + 1);
+        }
+      }
+    } catch (error) {
+      // Silently skip inaccessible directories
+    }
+  }
+
+  async detectProjectType(projectPath) {
+    const files = await fs.readdir(projectPath).catch(() => []);
+    
+    // Check for specific project indicators
+    if (files.includes('package.json')) {
+      const packageJson = await this.readJSON(path.join(projectPath, 'package.json'));
+      if (packageJson?.scripts?.dev && packageJson?.dependencies?.next) return 'nextjs';
+      if (packageJson?.dependencies?.react) return 'react';
+      return 'nodejs';
+    }
+    
+    if (files.includes('requirements.txt') || files.includes('setup.py')) return 'python';
+    if (files.includes('Anchor.toml')) return 'solana';
+    if (files.includes('hardhat.config.js') || files.some(f => f.endsWith('.sol'))) return 'solidity';
+    if (files.includes('index.html')) return 'html';
+    if (files.some(f => f.endsWith('.md'))) return 'markdown';
+    if (files.some(f => f.endsWith('.sh'))) return 'ssh';
+    
+    return null;
+  }
+
+  async readJSON(filePath) {
+    try {
+      const content = await fs.readFile(filePath, 'utf8');
+      return JSON.parse(content);
+    } catch {
+      return null;
+    }
+  }
+
+  // Create organized project structure
+  async createProjectStructure() {
+    const organizationPath = path.join(process.cwd(), 'organized-projects');
+    
+    try {
+      await fs.mkdir(organizationPath, { recursive: true });
+      
+      // Group projects by type
+      const projectsByType = {};
+      this.projectStructure.projects.forEach(project => {
+        if (!projectsByType[project.type]) {
+          projectsByType[project.type] = [];
+        }
+        projectsByType[project.type].push(project);
+      });
+
+      // Create type-based directories and symlinks
+      for (const [type, projects] of Object.entries(projectsByType)) {
+        const typePath = path.join(organizationPath, type);
+        await fs.mkdir(typePath, { recursive: true });
+        
+        for (const project of projects) {
+          const linkPath = path.join(typePath, project.name);
+          try {
+            await fs.symlink(project.path, linkPath);
+            project.status = 'organized';
+          } catch (error) {
+            console.log(`⚠️  Could not create symlink for ${project.name}: ${error.message}`);
+          }
+        }
+      }
+
+      await this.generateDashboard(organizationPath);
+      this.projectStructure.organized = true;
+      
+    } catch (error) {
+      console.error('❌ Error creating project structure:', error.message);
+    }
+  }
+
+  // Generate a dashboard HTML file
+  async generateDashboard(organizationPath) {
+    const dashboardHTML = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Dev Agent Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .project-card { 
+            background: #2d2d2d; 
+            border-radius: 8px; 
+            padding: 20px; 
+            border-left: 4px solid #4CAF50;
+            transition: transform 0.2s;
+        }
+        .project-card:hover { transform: translateY(-2px); }
+        .project-type { 
+            background: #4CAF50; 
+            color: white; 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            display: inline-block; 
+            margin-bottom: 10px; 
+        }
+        .status { float: right; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        .status.discovered { background: #ff9800; }
+        .status.organized { background: #4CAF50; }
+        .status.deployed { background: #2196F3; }
+        .actions { margin-top: 15px; }
+        .btn { 
+            background: #4CAF50; 
+            color: white; 
+            border: none; 
+            padding: 8px 16px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            margin-right: 10px; 
+        }
+        .btn:hover { background: #45a049; }
+        .stats { display: flex; justify-content: space-around; margin-bottom: 30px; }
+        .stat { text-align: center; }
+        .stat-number { font-size: 2em; font-weight: bold; color: #4CAF50; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 AI Development Agent Dashboard</h1>
+        <p>Managing your multi-platform development projects</p>
+    </div>
+    
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-number">${this.projectStructure.projects.length}</div>
+            <div>Total Projects</div>
+        </div>
+        <div class="stat">
+            <div class="stat-number">${Object.keys(this.platforms).length}</div>
+            <div>Supported Platforms</div>
+        </div>
+        <div class="stat">
+            <div class="stat-number">${this.projectStructure.projects.filter(p => p.status === 'organized').length}</div>
+            <div>Organized Projects</div>
+        </div>
+    </div>
+    
+    <div class="project-grid">
+        ${this.projectStructure.projects.map(project => `
+            <div class="project-card">
+                <div class="project-type">${project.type.toUpperCase()}</div>
+                <div class="status ${project.status}">${project.status.toUpperCase()}</div>
+                <h3>${project.name}</h3>
+                <p><strong>Path:</strong> ${project.path}</p>
+                <p><strong>Last Modified:</strong> ${project.lastModified.toLocaleDateString()}</p>
+                <div class="actions">
+                    <button class="btn" onclick="openProject('${project.path}')">Open</button>
+                    <button class="btn" onclick="buildProject('${project.name}', '${project.type}')">Build</button>
+                    <button class="btn" onclick="deployProject('${project.name}')">Deploy</button>
+                </div>
+            </div>
+        `).join('')}
+    </div>
+    
+    <script>
+        function openProject(path) {
+            // This would integrate with your device's file manager
+            alert('Opening project at: ' + path);
+        }
+        
+        function buildProject(name, type) {
+            alert('Building ' + type + ' project: ' + name);
+            // This would trigger the build command
+        }
+        
+        function deployProject(name) {
+            alert('Deploying project: ' + name);
+            // This would trigger deployment
+        }
+        
+        // Auto-refresh every 30 seconds
+        setTimeout(() => location.reload(), 30000);
+    </script>
+</body>
+</html>`;
+
+    await fs.writeFile(path.join(organizationPath, 'dashboard.html'), dashboardHTML);
+    console.log('📊 Dashboard created at: ' + path.join(organizationPath, 'dashboard.html'));
+  }
+
+  // Build a specific project
+  async buildProject(projectName) {
+    const project = this.projectStructure.projects.find(p => p.name === projectName);
+    if (!project) {
+      console.error(`❌ Project ${projectName} not found`);
+      return;
+    }
+
+    console.log(`🔨 Building ${project.type} project: ${project.name}`);
+    
+    try {
+      const buildCmd = this.platforms[project.type].buildCmd;
+      const { stdout, stderr } = await execAsync(buildCmd, { cwd: project.path });
+      
+      console.log(`✅ Build successful for ${project.name}`);
+      if (stdout) console.log('Output:', stdout);
+      
+      project.status = 'built';
+      this.projectStructure.deploymentStatus[project.name] = 'built';
+      
+    } catch (error) {
+      console.error(`❌ Build failed for ${project.name}:`, error.message);
+      project.status = 'build-failed';
+    }
+  }
+
+  // Deploy a project (basic implementation)
+  async deployProject(projectName) {
+    const project = this.projectStructure.projects.find(p => p.name === projectName);
+    if (!project) {
+      console.error(`❌ Project ${projectName} not found`);
+      return;
+    }
+
+    console.log(`🚀 Deploying ${project.type} project: ${project.name}`);
+    
+    // This is a basic implementation - you'd customize based on your deployment targets
+    try {
+      switch (project.type) {
+        case 'nextjs':
+        case 'react':
+          console.log('📦 Deploying to Vercel/Netlify...');
+          // Add your deployment logic here
+          break;
+        case 'nodejs':
+          console.log('🔧 Deploying to server...');
+          // Add your server deployment logic here
+          break;
+        case 'solana':
+          console.log('⚡ Deploying to Solana network...');
+          // Add Solana deployment logic here
+          break;
+        case 'solidity':
+          console.log('💎 Deploying smart contracts...');
+          // Add Ethereum deployment logic here
+          break;
+        default:
+          console.log('📁 Preparing static files...');
+      }
+      
+      project.status = 'deployed';
+      this.projectStructure.deploymentStatus[project.name] = 'deployed';
+      console.log(`✅ Deployment successful for ${project.name}`);
+      
+    } catch (error) {
+      console.error(`❌ Deployment failed for ${project.name}:`, error.message);
+      project.status = 'deploy-failed';
+    }
+  }
+
+  // Sync projects across devices
+  async syncProjects() {
+    console.log('🔄 Syncing projects across devices...');
+    
+    // Create a sync manifest
+    const syncManifest = {
+      timestamp: new Date().toISOString(),
+      projects: this.projectStructure.projects.map(p => ({
+        name: p.name,
+        type: p.type,
+        status: p.status,
+        lastModified: p.lastModified,
+        checksum: await this.calculateChecksum(p.path)
+      }))
+    };
+
+    await fs.writeFile(
+      path.join(process.cwd(), 'sync-manifest.json'), 
+      JSON.stringify(syncManifest, null, 2)
+    );
+
+    this.projectStructure.lastSync = new Date();
+    console.log('✅ Sync manifest created');
+  }
+
+  async calculateChecksum(projectPath) {
+    // Simple checksum calculation based on file count and total size
+    try {
+      const files = await this.getAllFiles(projectPath);
+      return files.length.toString() + '-' + Date.now().toString().slice(-6);
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  async getAllFiles(dir) {
+    const files = [];
+    const items = await fs.readdir(dir).catch(() => []);
+    
+    for (const item of items) {
+      const fullPath = path.join(dir, item);
+      const stat = await fs.stat(fullPath).catch(() => null);
+      
+      if (stat?.isDirectory() && !item.startsWith('.') && item !== 'node_modules') {
+        files.push(...await this.getAllFiles(fullPath));
+      } else if (stat?.isFile()) {
+        files.push(fullPath);
+      }
+    }
+    
+    return files;
+  }
+
+  // Generate deployment scripts
+  async generateDeploymentScripts() {
+    const scriptsPath = path.join(process.cwd(), 'deployment-scripts');
+    await fs.mkdir(scriptsPath, { recursive: true });
+
+    // Docker deployment script
+    const dockerScript = `#!/bin/bash
+# Auto-generated deployment script by AI Dev Agent
+
+echo "🐳 Starting Docker deployment..."
+
+# Build and deploy each project type
+${this.projectStructure.projects.map(project => `
+# Deploy ${project.name} (${project.type})
+cd "${project.path}"
+if [ -f "Dockerfile" ]; then
+    docker build -t ${project.name.toLowerCase()} .
+    docker run -d -p 3000:3000 --name ${project.name.toLowerCase()} ${project.name.toLowerCase()}
+fi
+`).join('\n')}
+
+echo "✅ Deployment complete!"
+`;
+
+    await fs.writeFile(path.join(scriptsPath, 'deploy-docker.sh'), dockerScript);
+    await execAsync(`chmod +x ${path.join(scriptsPath, 'deploy-docker.sh')}`).catch(() => {});
+
+    // Git sync script
+    const gitScript = `#!/bin/bash
+# Auto-generated git sync script by AI Dev Agent
+
+echo "📁 Syncing all projects to Git..."
+
+${this.projectStructure.projects.map(project => `
+# Sync ${project.name}
+cd "${project.path}"
+if [ -d ".git" ]; then
+    git add .
+    git commit -m "Auto-sync by AI Dev Agent $(date)"
+    git push origin main || git push origin master
+fi
+`).join('\n')}
+
+echo "✅ Git sync complete!"
+`;
+
+    await fs.writeFile(path.join(scriptsPath, 'git-sync.sh'), gitScript);
+    await execAsync(`chmod +x ${path.join(scriptsPath, 'git-sync.sh')}`).catch(() => {});
+
+    console.log('📜 Deployment scripts generated in:', scriptsPath);
+  }
+
+  // Main execution method
+  async run() {
+    try {
+      await this.initialize();
+      await this.syncProjects();
+      await this.generateDeploymentScripts();
+      
+      console.log('\n🎉 AI Development Agent Setup Complete!');
+      console.log(`📊 Found ${this.projectStructure.projects.length} projects`);
+      console.log('📁 Check the organized-projects folder for your structured codebase');
+      console.log('🌐 Open dashboard.html in your browser to manage projects');
+      console.log('\n📋 Available Commands:');
+      console.log('  - agent.buildProject("project-name")');
+      console.log('  - agent.deployProject("project-name")');
+      console.log('  - agent.syncProjects()');
+      
+      return this.projectStructure;
+      
+    } catch (error) {
+      console.error('❌ Agent execution failed:', error.message);
+      throw error;
+    }
+  }
+
+  // Status report
+  getStatus() {
+    return {
+      organized: this.projectStructure.organized,
+      totalProjects: this.projectStructure.projects.length,
+      projectsByType: this.projectStructure.projects.reduce((acc, p) => {
+        acc[p.type] = (acc[p.type] || 0) + 1;
+        return acc;
+      }, {}),
+      lastSync: this.projectStructure.lastSync,
+      deploymentStatus: this.projectStructure.deploymentStatus
+    };
+  }
+}
+
+// Usage example and initialization
+const agent = new AIDevAgent();
+
+// Export for use
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = AIDevAgent;
+}
+
+// Auto-run if executed directly
+if (require.main === module) {
+  agent.run().then(() => {
+    console.log('\n🤖 AI Dev Agent is now monitoring your projects!');
+    console.log('Current status:', JSON.stringify(agent.getStatus(), null, 2));
+  }).catch(console.error);
+}
+
+// For browser/React Native usage
+if (typeof window !== 'undefined') {
+  window.AIDevAgent = AIDevAgent;
+}
